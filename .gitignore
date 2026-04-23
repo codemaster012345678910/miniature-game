@@ -1,24 +1,850 @@
-# Compiled class file
-*.class
+// ===============================
+// 3D RPG FIGHTER – POWER GLOVE EDITION
+// (WEBGL with 2D fallback)
+// ===============================
 
-# Log file
-*.log
+let defaultFont;
+let useWebGL = true;
 
-# BlueJ files
-*.ctxt
+// --------- PLAYER, ENEMY, GAME STATE ---------
+let player = {
+  hp: 100,
+  maxHp: 100,
+  attack: 12,
+  defense: 2,
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+  weapon: "sword",     // sword, staff, glove
+  gloveLevel: 0,       // 0 = not owned, 1+ = levels
 
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
+  level: 1,
+  xp: 0,
+  coins: 0,
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+  attackAnimFrames: 0,
+  attackType: "none",
+
+  superAnim: 0,
+  superType: "none"
+};
+
+let enemy = null;
+let message = "";
+let gameState = "battle";
+
+let cooldowns = {
+  punch: 0,
+  heal: 0,
+  shock: 0
+};
+
+let enemyAttackAnim = 0;
+
+// ===============================
+// SETUP
+// ===============================
+function preload() {
+  defaultFont = loadFont("https://cdnjs.cloudflare.com/ajax/libs/topcoat/0.8.0/font/SourceCodePro-Regular.otf");
+}
+
+function setup() {
+  try {
+    createCanvas(700, 450, WEBGL);
+  } catch (e) {
+    createCanvas(700, 450);
+    useWebGL = false;
+  }
+  textFont(defaultFont);
+  spawnNewEnemy();
+}
+
+// ===============================
+// MAIN DRAW
+// ===============================
+function draw() {
+  background(25);
+
+  if (cooldowns.punch > 0) cooldowns.punch--;
+  if (cooldowns.heal > 0) cooldowns.heal--;
+  if (cooldowns.shock > 0) cooldowns.shock--;
+
+  if (useWebGL) {
+    // 3D ground
+    push();
+    rotateX(PI / 2);
+    fill(40, 80, 40);
+    plane(1200, 800);
+    pop();
+
+    // Player
+    push();
+    translate(-180, 40, 0);
+    drawPlayerWarrior();
+    pop();
+
+    // Enemy
+    if (enemy) {
+      push();
+      translate(180 + enemyAttackAnim, 40, 0);
+      drawEnemyMonster();
+      pop();
+    }
+  } else {
+    // Simple 2D fallback
+    push();
+    fill(40, 80, 40);
+    rect(0, height * 0.6, width, height * 0.4);
+    pop();
+
+    push();
+    translate(150, height * 0.6);
+    drawPlayer2D();
+    pop();
+
+    if (enemy) {
+      push();
+      translate(width - 150 + enemyAttackAnim, height * 0.6);
+      drawEnemy2D();
+      pop();
+    }
+  }
+
+  drawHUD();
+}
+
+// ===============================
+// HELPERS
+// ===============================
+function easeOut(t) {
+  return 1 - pow(1 - t, 3);
+}
+
+// ===============================
+// PLAYER – 3D WARRIOR
+// ===============================
+function drawPlayerWarrior() {
+  let t = player.attackAnimFrames;
+  if (t > 0) player.attackAnimFrames--;
+
+  push();
+  translate(0, sin(frameCount * 0.1) * 3, 0);
+
+  if (player.attackType === "stab" && t > 0) rotateX(-0.4 * easeOut(t / 20));
+  if (player.attackType === "smash" && t > 0) rotateX(0.3 * easeOut(t / 20));
+  if (player.attackType === "glovePunch" && t > 0) rotateX(-1.2 * easeOut(t / 20));
+
+  // BODY
+  push();
+  fill(60, 60, 80);
+  rotateZ(PI);
+  cylinder(10, 60);
+  pop();
+
+  // CHEST ARMOR
+  push();
+  translate(0, -10, 0);
+  fill(120, 120, 160);
+  box(30, 20, 15);
+  pop();
+
+  // HEAD
+  push();
+  translate(0, -55, 0);
+  fill(230, 200, 170);
+  sphere(15);
+  push();
+  translate(0, 0, 16);
+  fill(0);
+  ellipse(-5, -4, 3, 3);
+  ellipse(5, -4, 3, 3);
+  noFill();
+  stroke(0);
+  strokeWeight(1.5);
+  arc(0, 4, 8, 4, 0, PI);
+  pop();
+  pop();
+
+  // LEGS
+  push(); translate(-7, 35, 0); fill(50, 50, 70); box(6, 40, 6); pop();
+  push(); translate(7, 35, 0); fill(50, 50, 70); box(6, 40, 6); pop();
+
+  // LEFT ARM
+  push();
+  translate(-18, -25, 0);
+  rotateZ(0.2 * sin(frameCount * 0.1));
+  fill(230, 200, 170);
+  cylinder(4, 40);
+  pop();
+
+  // RIGHT ARM + WEAPON
+  push();
+  translate(18, -25, 0);
+
+  let armRotX = 0;
+  let armRotZ = 0;
+
+  if (player.attackType === "swing" && t > 0) armRotZ = -1.0 * easeOut(t / 20);
+  if (player.attackType === "stab" && t > 0) armRotX = -1.0 * easeOut(t / 20);
+  if (player.attackType === "smash" && t > 0) armRotX = -1.2 * easeOut(t / 20);
+  if (player.attackType === "glovePunch" && t > 0) armRotX = -1.4 * easeOut(t / 20);
+
+  rotateZ(armRotZ);
+  rotateX(armRotX);
+
+  fill(230, 200, 170);
+  cylinder(4, 40);
+
+  // Weapon / Glove
+  push();
+  translate(0, 20, 0);
+
+  if (player.weapon === "sword") {
+    rotateZ(PI / 2);
+    drawSword();
+  } else if (player.weapon === "staff") {
+    drawStaff();
+  } else if (player.weapon === "glove") {
+    drawPowerGlove();
+  }
+
+  pop();
+  pop();
+
+  // SUPERPOWER VISUALS
+  if (player.superAnim > 0) {
+    player.superAnim--;
+
+    // Power Punch – orange ring
+    if (player.superType === "punch") {
+      push();
+      noFill();
+      stroke(255, 140, 0);
+      strokeWeight(4);
+      rotateX(PI / 2);
+      let size = 60 + player.superAnim * 2;
+      ellipse(0, 0, size, size);
+      pop();
+    }
+
+    // Shockwave – blue lightning sparks
+    if (player.superType === "shock") {
+      push();
+      stroke(0, 200, 255);
+      strokeWeight(3);
+      for (let i = 0; i < 7; i++) {
+        let angle = random(TWO_PI);
+        let len = random(25, 45);
+        let x1 = cos(angle) * 10;
+        let y1 = sin(angle) * 10;
+        let x2 = cos(angle) * len;
+        let y2 = sin(angle) * len;
+        line(x1, y1, 0, x2, y2, 0);
+      }
+      pop();
+    }
+
+    // Power Glove special shockwave
+    if (player.superType === "gloveShock") {
+      push();
+      noFill();
+      stroke(255, 80, 0);
+      strokeWeight(4);
+      rotateX(PI / 2);
+      let size = 40 + (player.gloveLevel * 20) + player.superAnim * 2;
+      ellipse(0, 0, size, size);
+      pop();
+    }
+  }
+
+  pop();
+}
+
+// ===============================
+// PLAYER – 2D FALLBACK
+// ===============================
+function drawPlayer2D() {
+  push();
+  stroke(255);
+  strokeWeight(3);
+  noFill();
+
+  line(0, -40, 0, 0);
+  ellipse(0, -55, 20, 20);
+  line(0, -30, -20, -10);
+  line(0, -30, 20, -10);
+  line(0, 0, -15, 25);
+  line(0, 0, 15, 25);
+
+  noStroke();
+  fill(255, 200, 0);
+  textAlign(CENTER);
+  textSize(12);
+  text(player.weapon, 0, -70);
+  pop();
+}
+
+// ===============================
+// POWER GLOVE MODEL
+// ===============================
+function drawPowerGlove() {
+  fill(255, 80, 0);
+  box(20, 20, 20);
+
+  push();
+  translate(0, -15, 0);
+  emissiveMaterial(255, 120, 0);
+  sphere(8);
+  pop();
+}
+
+// ===============================
+// ENEMY – 3D MODELS + FACES
+// ===============================
+function drawEnemyMonster() {
+  translate(0, sin(frameCount * 0.1) * 3, 0);
+
+  if (enemy.movingIn) {
+    enemyAttackAnim -= 6;
+    if (enemyAttackAnim <= -80) {
+      enemy.movingIn = false;
+      enemy.returning = true;
+      enemyDoDamage();
+    }
+  } else if (enemy.returning) {
+    enemyAttackAnim += 6;
+    if (enemyAttackAnim >= 0) {
+      enemyAttackAnim = 0;
+      enemy.returning = false;
+    }
+  }
+
+  ambientMaterial(enemy.color);
+
+  if (enemy.type === "Goblin") {
+    push(); translate(0, 10, 0); box(35, 45, 25); pop();
+    push(); translate(0, -25, 0); sphere(20); drawEnemyFace("Goblin"); pop();
+    push(); translate(-25, 0, 0); box(8, 35, 8); pop();
+    push(); translate(25, 0, 0); box(8, 35, 8); pop();
+    push(); translate(-10, 40, 0); box(10, 30, 10); pop();
+    push(); translate(10, 40, 0); box(10, 30, 10); pop();
+  }
+
+  else if (enemy.type === "Skeleton") {
+    ambientMaterial(240);
+    push(); box(15, 50, 15); pop();
+    push(); translate(0, -35, 0); sphere(18); drawEnemyFace("Skeleton"); pop();
+    push(); translate(-18, -5, 0); box(5, 40, 5); pop();
+    push(); translate(18, -5, 0); box(5, 40, 5); pop();
+    push(); translate(-7, 35, 0); box(6, 30, 6); pop();
+    push(); translate(7, 35, 0); box(6, 30, 6); pop();
+  }
+
+  else if (enemy.type === "Orc") {
+    ambientMaterial(0, 150, 0);
+    push(); translate(0, 5, 0); box(55, 55, 35); pop();
+    push(); translate(0, -35, 0); sphere(22); drawEnemyFace("Orc"); pop();
+    push(); translate(-35, 0, 0); box(12, 45, 12); pop();
+    push(); translate(35, 0, 0); box(12, 45, 12); pop();
+    push(); translate(-15, 45, 0); box(14, 35, 14); pop();
+    push(); translate(15, 45, 0); box(14, 35, 14); pop();
+  }
+
+  else if (enemy.type === "Slime") {
+    ambientMaterial(0, 150, 255, 200);
+    push(); sphere(35); drawEnemyFace("Slime"); pop();
+  }
+
+  else if (enemy.type === "Fire Spirit") {
+    emissiveMaterial(255, 120, 40);
+    push(); sphere(40); drawEnemyFace("Fire Spirit"); pop();
+  }
+
+  else if (enemy.type === "Stone Golem") {
+    ambientMaterial(150);
+    push(); box(70, 60, 40); pop();
+    push(); translate(0, -40, 0); box(35, 30, 30); drawEnemyFace("Stone Golem"); pop();
+    push(); translate(-45, 0, 0); box(18, 50, 18); pop();
+    push(); translate(45, 0, 0); box(18, 50, 18); pop();
+    push(); translate(-20, 45, 0); box(20, 35, 20); pop();
+    push(); translate(20, 45, 0); box(20, 35, 20); pop();
+  }
+
+  else if (enemy.type === "Shadow Bat") {
+    ambientMaterial(150, 0, 200);
+    push(); box(30, 20, 20); pop();
+    push(); translate(0, -20, 0); sphere(12); drawEnemyFace("Shadow Bat"); pop();
+    push(); translate(-35, 0, 0); box(40, 5, 5); pop();
+    push(); translate(35, 0, 0); box(40, 5, 5); pop();
+  }
+}
+
+// ===============================
+// ENEMY – 2D FALLBACK
+// ===============================
+function drawEnemy2D() {
+  push();
+  stroke(255, 0, 0);
+  strokeWeight(3);
+  noFill();
+
+  line(0, -40, 0, 0);
+  ellipse(0, -55, 20, 20);
+  line(0, -30, -20, -10);
+  line(0, -30, 20, -10);
+  line(0, 0, -15, 25);
+  line(0, 0, 15, 25);
+
+  noStroke();
+  fill(enemy.color || color(255, 0, 0));
+  textAlign(CENTER);
+  textSize(12);
+  text(enemy.type, 0, -70);
+  pop();
+}
+
+// ===============================
+// ENEMY FACES (3D)
+// ===============================
+function drawEnemyFace(type) {
+  push();
+  translate(0, 0, 26);
+  noStroke();
+
+  if (type === "Goblin") {
+    fill(255);
+    ellipse(-8, -6, 6, 6);
+    ellipse(8, -6, 6, 6);
+    fill(0);
+    ellipse(-8, -6, 3, 3);
+    ellipse(8, -6, 3, 3);
+    noFill(); stroke(0); strokeWeight(2);
+    arc(0, 4, 18, 8, 0, PI);
+  }
+
+  else if (type === "Skeleton") {
+    fill(0);
+    rect(-10, -8, 6, 8);
+    rect(4, -8, 6, 8);
+    stroke(0); strokeWeight(2);
+    line(-8, 4, 8, 4);
+  }
+
+  else if (type === "Orc") {
+    fill(255);
+    ellipse(-8, -6, 6, 6);
+    ellipse(8, -6, 6, 6);
+    fill(0);
+    ellipse(-8, -6, 3, 3);
+    ellipse(8, -6, 3, 3);
+    stroke(0); strokeWeight(2);
+    line(-6, 6, 6, 4);
+    line(-3, 6, -1, 10);
+    line(3, 6, 1, 10);
+  }
+
+  else if (type === "Slime") {
+    fill(255);
+    ellipse(-8, -6, 7, 7);
+    ellipse(8, -6, 7, 7);
+    fill(0);
+    ellipse(-8, -6, 3, 3);
+    ellipse(8, -6, 3, 3);
+    noFill(); stroke(0); strokeWeight(2);
+    arc(0, 4, 16, 8, 0, PI);
+  }
+
+  else if (type === "Fire Spirit") {
+    fill(255, 200, 0);
+    ellipse(-7, -6, 5, 8);
+    ellipse(7, -6, 5, 8);
+    stroke(255, 80, 0); strokeWeight(2);
+    noFill();
+    arc(0, 6, 18, 10, PI, 0);
+  }
+
+  else if (type === "Stone Golem") {
+    fill(50);
+    rect(-10, -8, 8, 6);
+    rect(2, -8, 8, 6);
+    stroke(0); strokeWeight(2);
+    line(-8, 6, 8, 6);
+  }
+
+  else if (type === "Shadow Bat") {
+    fill(255);
+    ellipse(-5, -6, 4, 4);
+    ellipse(5, -6, 4, 4);
+    fill(0);
+    ellipse(-5, -6, 2, 2);
+    ellipse(5, -6, 2, 2);
+    noFill(); stroke(0); strokeWeight(2);
+    arc(0, 4, 14, 6, PI, 0);
+  }
+
+  pop();
+}
+// ===============================
+// HUD
+// ===============================
+function drawHUD() {
+  resetMatrix();
+  translate(-width / 2, -height / 2);
+
+  fill(255);
+  textSize(16);
+
+  text(`LV: ${player.level}  XP: ${player.xp}/${player.level * 20}`, 20, 30);
+  text(`HP: ${player.hp}/${player.maxHp}`, 20, 55);
+  text(`ATK: ${player.attack}  DEF: ${player.defense}`, 20, 80);
+  text(`Coins: ${player.coins}`, 20, 105);
+
+  text(`Weapon: ${player.weapon}`, 20, 130);
+  if (player.gloveLevel > 0) {
+    text(`Power Glove Lv.${player.gloveLevel}`, 20, 155);
+  }
+
+  if (enemy) {
+    text(`Enemy: ${enemy.type} (Lv ${enemy.level})`, 400, 30);
+    text(`HP: ${enemy.hp}/${enemy.maxHp}`, 400, 55);
+  }
+
+  text("1 = Sword | 2 = Staff | 3 = Power Glove", 20, height - 140);
+  text("A = Attack | Q = Punch | W = Heal | E = Shockwave", 20, height - 115);
+
+  text(message, 20, height - 50);
+
+  if (gameState === "win") {
+    fill(0, 255, 0);
+    text("You Win! Press N for next enemy", 20, height - 20);
+  } else if (gameState === "lose") {
+    fill(255, 0, 0);
+    text("You Lose! Press R to restart", 20, height - 20);
+  } else if (gameState === "shop") {
+    drawShopHUD();
+  }
+}
+
+// ===============================
+// SHOP HUD
+// ===============================
+function drawShopHUD() {
+  fill(0, 0, 0, 200);
+  rect(80, 80, width - 160, height - 160);
+
+  fill(255);
+  textSize(18);
+  text("SHOP - Spend your coins!", 120, 120);
+  textSize(16);
+
+  text("1) Power Glove (Unlock) - 30 coins", 120, 160);
+  text("2) Upgrade Power Glove (+1 Level) - 25 coins", 120, 190);
+  text("3) Shield Plate (+5 DEF) - 20 coins", 120, 220);
+  text("4) Energy Core (+20 Max HP) - 25 coins", 120, 250);
+  text("X / ESC / ENTER / SPACE = Exit shop", 120, 280);
+  text(`Your coins: ${player.coins}`, 120, 310);
+}
+
+// ===============================
+// ENEMY GENERATION
+// ===============================
+function spawnNewEnemy() {
+  const types = ["Goblin", "Skeleton", "Orc", "Slime", "Fire Spirit", "Stone Golem", "Shadow Bat"];
+  let type = random(types);
+  let lvl = max(1, player.level + floor(random(-1, 2)));
+
+  let baseHP = 40 + lvl * 15;
+  let baseATK = 5 + lvl * 2;
+
+  let col;
+  if (type === "Goblin") col = color(0, 200, 80);
+  else if (type === "Skeleton") col = color(240);
+  else if (type === "Orc") col = color(0, 150, 0);
+  else if (type === "Slime") col = color(0, 150, 255);
+  else if (type === "Fire Spirit") col = color(255, 120, 40);
+  else if (type === "Stone Golem") col = color(150);
+  else if (type === "Shadow Bat") col = color(150, 0, 200);
+  else col = color(255, 80, 80);
+
+  enemy = {
+    type,
+    level: lvl,
+    maxHp: baseHP,
+    hp: baseHP,
+    attack: baseATK,
+    color: col,
+    movingIn: false,
+    returning: false
+  };
+
+  enemyAttackAnim = 0;
+  if (gameState !== "shop") {
+    gameState = "battle";
+    message = `A wild ${type} appears!`;
+  }
+}
+
+// ===============================
+// WEAPONS
+// ===============================
+function drawSword() {
+  fill(200);
+  box(60, 6, 6);
+  fill(120);
+  translate(-35, 0, 0);
+  box(10, 18, 10);
+}
+
+function drawStaff() {
+  fill(160, 100, 50);
+  cylinder(5, 70);
+  translate(0, -40, 0);
+  fill(80, 180, 255);
+  sphere(10);
+}
+
+// ===============================
+// COMBAT
+// ===============================
+function chooseAttackAnimation() {
+  if (player.weapon === "sword") {
+    player.attackType = random(["swing", "smash"]);
+  } else if (player.weapon === "staff") {
+    player.attackType = random(["stab", "smash"]);
+  } else if (player.weapon === "glove") {
+    player.attackType = "glovePunch";
+  }
+  player.attackAnimFrames = 20;
+}
+
+function attack() {
+  if (gameState !== "battle" || !enemy) return;
+
+  chooseAttackAnimation();
+
+  let dmgToEnemy = 0;
+
+  if (player.weapon === "glove" && player.gloveLevel > 0) {
+    let base = 10 + player.gloveLevel * 5;
+    dmgToEnemy = max(0, floor(random(base, base + 10)) - floor(enemy.level / 2));
+    player.superAnim = 20;
+    player.superType = "gloveShock";
+    message = `POWER GLOVE HIT! ${dmgToEnemy} damage!`;
+  } else {
+    dmgToEnemy = max(0, floor(random(5, player.attack + 1)) - floor(enemy.level / 2));
+    message = `You hit ${dmgToEnemy}!`;
+  }
+
+  enemy.hp -= dmgToEnemy;
+
+  if (enemy.hp <= 0) {
+    enemy.hp = 0;
+    winBattle();
+    return;
+  }
+
+  if (!enemy.movingIn && !enemy.returning) {
+    enemy.movingIn = true;
+  }
+}
+
+function enemyDoDamage() {
+  if (gameState !== "battle" || !enemy) return;
+
+  let dmgToPlayer = max(0, floor(random(3, enemy.attack + 1)) - player.defense);
+  player.hp -= dmgToPlayer;
+  message += ` Enemy hits ${dmgToPlayer}!`;
+
+  if (player.hp <= 0) {
+    player.hp = 0;
+    gameState = "lose";
+    message = "You were defeated...";
+  }
+}
+
+// ===============================
+// SUPERPOWERS
+// ===============================
+function powerPunch() {
+  if (gameState !== "battle" || cooldowns.punch > 0 || !enemy) return;
+
+  let dmg = floor(random(18, 28)) + player.attack;
+  enemy.hp -= dmg;
+  player.superAnim = 20;
+  player.superType = "punch";
+  cooldowns.punch = 120;
+
+  message = `POWER PUNCH! ${dmg} damage!`;
+
+  if (enemy.hp <= 0) {
+    enemy.hp = 0;
+    winBattle();
+    return;
+  }
+
+  if (!enemy.movingIn && !enemy.returning) {
+    enemy.movingIn = true;
+  }
+}
+
+function healBurst() {
+  if (gameState !== "battle" || cooldowns.heal > 0) return;
+
+  let heal = floor(random(20, 35));
+  player.hp = min(player.maxHp, player.hp + heal);
+  player.superAnim = 20;
+  player.superType = "heal";
+  cooldowns.heal = 180;
+
+  message = `HEAL BURST! Restored ${heal} HP!`;
+}
+
+function shockwave() {
+  if (gameState !== "battle" || cooldowns.shock > 0 || !enemy) return;
+
+  let dmg = floor(random(10, 18)) + floor(player.attack / 2);
+  enemy.hp -= dmg;
+  player.superAnim = 20;
+  player.superType = "shock";
+  cooldowns.shock = 150;
+
+  message = `SHOCKWAVE! ${dmg} damage! Enemy is stunned (no attack).`;
+
+  if (enemy.hp <= 0) {
+    enemy.hp = 0;
+    winBattle();
+    return;
+  }
+}
+
+// ===============================
+// WIN / LEVEL / COINS / SHOP
+// ===============================
+function winBattle() {
+  gameState = "win";
+
+  let xpGain = floor(random(10, 20));
+  let coinGain = floor(random(5, 16));
+
+  player.xp += xpGain;
+  player.coins += coinGain;
+
+  message = `Enemy defeated! +${xpGain} XP, +${coinGain} coins`;
+
+  if (player.xp >= player.level * 20) {
+    player.xp -= player.level * 20;
+    player.level++;
+    player.maxHp += 10;
+    player.attack += 2;
+    player.defense += 1;
+    player.hp = player.maxHp;
+    message += ` | LEVEL UP! Now level ${player.level}`;
+
+    if (player.level % 5 === 0) {
+      gameState = "shop";
+      message = `LEVEL ${player.level}! Shop unlocked.`;
+    }
+  }
+}
+
+// ===============================
+// SHOP LOGIC
+// ===============================
+function buyItem(option) {
+  if (gameState !== "shop") return;
+
+  if (option === "1") {
+    if (player.gloveLevel === 0) {
+      if (player.coins >= 30) {
+        player.coins -= 30;
+        player.gloveLevel = 1;
+        message = "Bought Power Glove! (Lv.1)";
+      } else {
+        message = "Not enough coins!";
+      }
+    } else {
+      message = "You already own the Power Glove!";
+    }
+  } else if (option === "2") {
+    if (player.gloveLevel > 0) {
+      if (player.coins >= 25) {
+        player.coins -= 25;
+        player.gloveLevel++;
+        message = `Power Glove upgraded to Lv.${player.gloveLevel}!`;
+      } else {
+        message = "Not enough coins!";
+      }
+    } else {
+      message = "You must buy the Power Glove first!";
+    }
+  } else if (option === "3") {
+    if (player.coins >= 20) {
+      player.coins -= 20;
+      player.defense += 5;
+      message = "Bought Shield Plate! +5 DEF";
+    } else {
+      message = "Not enough coins!";
+    }
+  } else if (option === "4") {
+    if (player.coins >= 25) {
+      player.coins -= 25;
+      player.maxHp += 20;
+      player.hp = player.maxHp;
+      message = "Bought Energy Core! +20 Max HP";
+    } else {
+      message = "Not enough coins!";
+    }
+  }
+}
+
+// ===============================
+// INPUT
+// ===============================
+function keyPressed() {
+  if (gameState === "battle") {
+    if (key === "A") attack();
+    if (key === "Q") powerPunch();
+    if (key === "W") healBurst();
+    if (key === "E") shockwave();
+    if (key === "1") player.weapon = "sword";
+    if (key === "2") player.weapon = "staff";
+    if (key === "3" && player.gloveLevel > 0) player.weapon = "glove";
+  } else if (gameState === "win") {
+    if (key === "N") {
+      spawnNewEnemy();
+    }
+  } else if (gameState === "lose") {
+    if (key === "R") {
+      player = {
+        hp: 100,
+        maxHp: 100,
+        attack: 12,
+        defense: 2,
+        weapon: "sword",
+        gloveLevel: 0,
+        level: 1,
+        xp: 0,
+        coins: 0,
+        attackAnimFrames: 0,
+        attackType: "none",
+        superAnim: 0,
+        superType: "none"
+      };
+      cooldowns = { punch: 0, heal: 0, shock: 0 };
+      spawnNewEnemy();
+      message = "";
+      gameState = "battle";
+    }
+  } else if (gameState === "shop") {
+    let k = key.toUpperCase();
+
+    if (k === "1" || k === "2" || k === "3" || k === "4") {
+      buyItem(k);
+      return;
+    }
+
+    if (k === "X" || keyCode === ESCAPE || keyCode === ENTER || keyCode === 32) {
+      gameState = "battle";
+      spawnNewEnemy();
+      message = "Shop closed.";
+    }
+  }
+}
